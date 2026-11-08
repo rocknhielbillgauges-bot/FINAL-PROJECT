@@ -1,0 +1,661 @@
+using System;
+
+// ==============================================================
+//  WAREHOUSE STOCK DISTRIBUTION SYSTEM
+//  A C# console program that manages products spread across
+//  several warehouses. All data is stored in arrays.
+// ==============================================================
+class Program
+{
+    // ---------- CONSTANTS: maximum size of the arrays ----------
+    const int MAX_PRODUCTS = 100;
+    const int MAX_WAREHOUSES = 10;
+    const int MAX_MOVEMENTS = 500;
+
+    // ---------- PRODUCT ARRAYS ----------
+    // The same index always means the same product:
+    // productIds[0], productNames[0], productPrices[0] and lowStockLimits[0] all describe product 0.
+    static string[] productIds = new string[MAX_PRODUCTS];
+    static string[] productNames = new string[MAX_PRODUCTS];
+    static decimal[] productPrices = new decimal[MAX_PRODUCTS];
+    static int[] lowStockLimits = new int[MAX_PRODUCTS];   // a product is "low" at or below this amount
+
+    // ---------- WAREHOUSE ARRAYS ----------
+    static string[] warehouseNames = new string[MAX_WAREHOUSES];
+    static int[,] stock = new int[MAX_PRODUCTS, MAX_WAREHOUSES];   // stock[product, warehouse] = quantity
+
+    // ---------- STOCK MOVEMENT RECORDS ----------
+    static string[] movementRecords = new string[MAX_MOVEMENTS];   // one text line per movement
+    static int movementCount = 0;    // how many records are stored
+    static int productCount = 0;     // how many products are registered
+    static int warehouseCount = 0;   // how many warehouses exist
+
+    // ==============================================================
+    //  MAIN: shows the menu again and again until the user picks 0
+    // ==============================================================
+    static void Main()
+    {
+        InitializeData();   // load the warehouses and sample products
+
+        while (true)
+        {
+            Console.Clear();
+            ShowMenu();
+
+            Console.Write("Enter your choice: ");
+            string choice = Console.ReadLine() ?? "";
+
+            // Run the method that matches the user's choice
+            switch (choice)
+            {
+                case "1": ReceiveStock(); break;
+                case "2": TransferStock(); break;
+                case "3": ReleaseStock(); break;
+                case "4": SearchProduct(); break;
+                case "5": UpdateInventory(); break;
+                case "6": ReportsMenu(); break;
+                case "0":
+                    Console.WriteLine("\nThank you for using the system!");
+                    return;   // ends the program
+                default:
+                    Console.WriteLine("Invalid choice. Try again.");
+                    break;
+            }
+
+            // Wait for a key so the user can read the result.
+            // (Reports has its own pauses, so it is skipped here.)
+            if (choice != "6") Pause();
+        }
+    }
+
+    // Prints the main menu
+    static void ShowMenu()
+    {
+        Console.WriteLine("==============================================");
+        Console.WriteLine("     WAREHOUSE STOCK DISTRIBUTION SYSTEM");
+        Console.WriteLine("==============================================");
+        Console.WriteLine("1. Receive Stock");
+        Console.WriteLine("2. Transfer Stock");
+        Console.WriteLine("3. Release Stock");
+        Console.WriteLine("4. Search Product");
+        Console.WriteLine("5. Update Inventory");
+        Console.WriteLine("6. Reports");
+        Console.WriteLine("0. Exit");
+        Console.WriteLine("==============================================");
+    }
+
+    // ==============================================================
+    //  STARTING DATA
+    // ==============================================================
+
+    // Creates the 3 warehouses and 4 sample products
+    static void InitializeData()
+    {
+        warehouseNames[0] = "Main Warehouse";
+        warehouseNames[1] = "North Warehouse";
+        warehouseNames[2] = "South Warehouse";
+        warehouseCount = 3;
+
+        //                   id    name        price   limit  main  north  south
+        AddInitialProduct("P1", "Laptop",   25000m,  5,     20,   10,    5);
+        AddInitialProduct("P2", "Keyboard",   750m, 10,     50,   30,   20);
+        AddInitialProduct("P3", "Mouse",      400m, 10,     40,   15,   25);
+        AddInitialProduct("P4", "Monitor",   6500m,  3,     12,    5,    4);
+    }
+
+    // Stores one product and its starting stock for each warehouse
+    static void AddInitialProduct(
+        string id, string name, decimal price, int limit,
+        int main, int north, int south)
+    {
+        int p = productCount;   // the next free spot in the arrays
+
+        productIds[p] = id;
+        productNames[p] = name;
+        productPrices[p] = price;
+        lowStockLimits[p] = limit;
+        stock[p, 0] = main;
+        stock[p, 1] = north;
+        stock[p, 2] = south;
+        productCount++;
+    }
+
+    // ==============================================================
+    //  OPTION 1: RECEIVE STOCK
+    //  Add stock to a warehouse (for an existing or a new product)
+    // ==============================================================
+    static void ReceiveStock()
+    {
+        Header("RECEIVE STOCK");
+        Console.WriteLine("1. Existing product");
+        Console.WriteLine("2. New product");
+
+        string type = ReadNonEmpty("Select option: ");
+        int p;   // position of the product in the arrays
+
+        if (type == "1") p = SelectProduct();        // pick a product that already exists
+        else if (type == "2") p = AddNewProduct();   // register a brand-new product first
+        else { Console.WriteLine("Invalid option."); return; }
+
+        if (p == -1) return;   // -1 means something went wrong, so stop
+
+        int w = SelectWarehouse();
+        if (w == -1) return;
+
+        int quantity = ReadInt("Quantity received: ", 1);
+
+        stock[p, w] += quantity;   // add the new stock
+
+        LogMovement("RECEIVE", productIds[p], "-", warehouseNames[w], quantity, "New stock received");
+
+        Console.WriteLine("Stock received successfully.");
+        Console.WriteLine("Updated stock: " + stock[p, w]);
+    }
+
+    // Registers a brand-new product (stock starts at 0 in every warehouse)
+    // Returns the product's position, or -1 if it could not be added
+    static int AddNewProduct()
+    {
+        if (productCount >= MAX_PRODUCTS)
+        {
+            Console.WriteLine("Product list is full.");
+            return -1;
+        }
+
+        string id = ReadNonEmpty("Enter new product ID: ");
+
+        // Two products cannot share the same ID
+        if (FindProduct(id) != -1)
+        {
+            Console.WriteLine("That product ID already exists.");
+            return -1;
+        }
+
+        string name = ReadNonEmpty("Enter product name: ");
+        decimal price = ReadDecimal("Enter unit price: ", 0.01m);
+        int limit = ReadInt("Enter low-stock limit: ", 0);
+
+        int p = productCount;   // the next free spot in the arrays
+
+        productIds[p] = id;
+        productNames[p] = name;
+        productPrices[p] = price;
+        lowStockLimits[p] = limit;
+        productCount++;   // stock[p, ...] is already 0 for every warehouse
+
+        LogMovement("NEW PRODUCT", id, "-", "-", 0, "Product registered: " + name);
+
+        Console.WriteLine("New product registered.");
+        return p;
+    }
+
+    // ==============================================================
+    //  OPTION 2: TRANSFER STOCK
+    //  Move stock from one warehouse to another
+    // ==============================================================
+    static void TransferStock()
+    {
+        Header("TRANSFER STOCK");
+
+        int p = SelectProduct();
+        if (p == -1) return;
+
+        Console.WriteLine("Source warehouse:");
+        int source = SelectWarehouse();
+        if (source == -1) return;
+
+        Console.WriteLine("Destination warehouse:");
+        int destination = SelectWarehouse();
+        if (destination == -1) return;
+
+        // CHECK 1: moving stock to the same warehouse makes no sense
+        if (source == destination)
+        {
+            Console.WriteLine("Source and destination must be different.");
+            return;
+        }
+
+        Console.WriteLine("Available stock: " + stock[p, source]);
+        int quantity = ReadInt("Quantity to transfer: ", 1);
+
+        // CHECK 2: cannot move more than the source warehouse has
+        if (quantity > stock[p, source])
+        {
+            Console.WriteLine("TRANSFER FAILED! Insufficient available stock.");
+            return;
+        }
+
+        // Both checks passed, so move the stock
+        stock[p, source] -= quantity;
+        stock[p, destination] += quantity;
+
+        LogMovement("TRANSFER", productIds[p], warehouseNames[source], warehouseNames[destination], quantity, "Stock transferred");
+
+        Console.WriteLine("Transfer successful!");
+        Console.WriteLine("Source remaining: " + stock[p, source]);
+        Console.WriteLine("Destination total: " + stock[p, destination]);
+    }
+
+    // ==============================================================
+    //  OPTION 3: RELEASE STOCK
+    //  Send stock out of a warehouse for distribution
+    // ==============================================================
+    static void ReleaseStock()
+    {
+        Header("RELEASE STOCK");
+
+        int p = SelectProduct();
+        if (p == -1) return;
+
+        int w = SelectWarehouse();
+        if (w == -1) return;
+
+        Console.WriteLine("Available stock: " + stock[p, w]);
+        int quantity = ReadInt("Quantity to release: ", 1);
+
+        // CHECK: cannot release more than the warehouse has
+        if (quantity > stock[p, w])
+        {
+            Console.WriteLine("RELEASE FAILED! Insufficient available stock.");
+            return;
+        }
+
+        stock[p, w] -= quantity;
+
+        LogMovement("RELEASE", productIds[p], warehouseNames[w], "Distribution", quantity, "Stock released");
+
+        Console.WriteLine("Stock released successfully.");
+        Console.WriteLine("Remaining stock: " + stock[p, w]);
+    }
+
+    // ==============================================================
+    //  OPTION 4: SEARCH PRODUCT
+    //  Find products by part of their ID or name (ignores capital letters)
+    // ==============================================================
+    static void SearchProduct()
+    {
+        Header("SEARCH PRODUCT");
+
+        string keyword = ReadNonEmpty("Enter product code or name: ");
+        bool found = false;
+
+        // Check every registered product
+        for (int p = 0; p < productCount; p++)
+        {
+            if (productIds[p].Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+                productNames[p].Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            {
+                found = true;
+
+                Console.WriteLine($"\nProduct ID: {productIds[p]}");
+                Console.WriteLine($"Product Name: {productNames[p]}");
+                Console.WriteLine($"Unit Price: {productPrices[p]:C2}");
+                Console.WriteLine($"Total Stock: {GetTotalStock(p)}");
+
+                // Show the stock in each warehouse
+                for (int w = 0; w < warehouseCount; w++)
+                    Console.WriteLine($"{warehouseNames[w]}: {stock[p, w]} units");
+            }
+        }
+
+        if (!found) Console.WriteLine("Product not found.");
+    }
+
+    // ==============================================================
+    //  OPTION 5: UPDATE INVENTORY
+    //  Correct a quantity, change a price, or rename a product
+    // ==============================================================
+    static void UpdateInventory()
+    {
+        Header("UPDATE INVENTORY");
+        Console.WriteLine("1. Update Quantity");
+        Console.WriteLine("2. Update Price");
+        Console.WriteLine("3. Update Product Name");
+        Console.WriteLine("0. Cancel");
+
+        string choice = ReadNonEmpty("Select option: ");
+
+        // Reject anything that is not 0-3 before asking for a product
+        if (choice != "1" && choice != "2" && choice != "3")
+        {
+            Console.WriteLine(choice == "0" ? "Cancelled." : "Invalid update option.");
+            return;
+        }
+
+        if (choice == "3")
+        {
+            UpdateProductName();
+            return;
+        }
+
+        int p = SelectProduct();
+        if (p == -1) return;
+
+        if (choice == "1")
+        {
+            // Replace the stored quantity with the actual counted quantity
+            int w = SelectWarehouse();
+            if (w == -1) return;
+
+            int oldQuantity = stock[p, w];
+            int newQuantity = ReadInt("Enter new actual quantity: ", 0);
+
+            stock[p, w] = newQuantity;
+
+            LogMovement("ADJUST", productIds[p], warehouseNames[w], warehouseNames[w],
+                Math.Abs((long)newQuantity - oldQuantity),
+                "Quantity changed from " + oldQuantity + " to " + newQuantity);
+
+            Console.WriteLine("Quantity updated successfully.");
+        }
+        else
+        {
+            // choice == "2": change the unit price
+            decimal oldPrice = productPrices[p];
+            decimal newPrice = ReadDecimal("Enter new unit price: ", 0.01m);
+
+            productPrices[p] = newPrice;
+
+            LogMovement("PRICE UPDATE", productIds[p], "-", "-", 0,
+                "Price changed from " + oldPrice + " to " + newPrice);
+
+            Console.WriteLine("Price updated successfully.");
+        }
+    }
+
+    // Renames a product
+    static void UpdateProductName()
+    {
+        int p = SelectProduct();
+        if (p == -1) return;
+
+        string oldName = productNames[p];
+        string newName = ReadNonEmpty("Enter new product name: ");
+
+        productNames[p] = newName;
+
+        LogMovement("NAME UPDATE", productIds[p], "-", "-", 0,
+            "Name changed from " + oldName + " to " + newName);
+
+        Console.WriteLine("Product name updated successfully.");
+    }
+
+    // ==============================================================
+    //  OPTION 6: REPORTS (a sub-menu with 4 reports)
+    // ==============================================================
+    static void ReportsMenu()
+    {
+        while (true)   // stays in this sub-menu until the user picks 0
+        {
+            Header("REPORTS");
+            Console.WriteLine("1. Low Inventory");
+            Console.WriteLine("2. Stock Value");
+            Console.WriteLine("3. Movement Records");
+            Console.WriteLine("4. Inventory Summary");
+            Console.WriteLine("0. Back to Main Menu");
+
+            string choice = ReadNonEmpty("Select option: ");
+
+            if (choice == "0") return;   // back to the main menu
+            else if (choice == "1") LowInventory();
+            else if (choice == "2") StockValue();
+            else if (choice == "3") MovementRecords();
+            else if (choice == "4") InventorySummary();
+            else Console.WriteLine("Invalid choice. Try again.");
+
+            Pause();
+        }
+    }
+
+    // REPORT 1: shows every product that is at or below its low-stock limit in a warehouse
+    static void LowInventory()
+    {
+        Header("LOW INVENTORY REPORT");
+        Console.WriteLine("Products at or below their low-stock threshold:\n");
+
+        bool found = false;
+
+        for (int p = 0; p < productCount; p++)
+        {
+            for (int w = 0; w < warehouseCount; w++)
+            {
+                if (stock[p, w] <= lowStockLimits[p])
+                {
+                    found = true;
+
+                    Console.WriteLine($"Product: {productNames[p]} ({productIds[p]})");
+                    Console.WriteLine($"Warehouse: {warehouseNames[w]}");
+                    Console.WriteLine($"Available: {stock[p, w]}");
+                    Console.WriteLine($"Threshold: {lowStockLimits[p]}\n");
+                }
+            }
+        }
+
+        if (!found) Console.WriteLine("No low-stock items found.");
+    }
+
+    // REPORT 2: total value (quantity x price) of the stock in each warehouse
+    static void StockValue()
+    {
+        Header("WAREHOUSE STOCK VALUE");
+
+        decimal grandTotal = 0m;
+
+        for (int w = 0; w < warehouseCount; w++)
+        {
+            decimal value = WarehouseValue(w);
+            grandTotal += value;
+
+            Console.WriteLine($"{warehouseNames[w]}: {value:C2}");
+        }
+
+        Console.WriteLine("-------------------------------------------");
+        Console.WriteLine($"TOTAL STOCK VALUE: {grandTotal:C2}");
+    }
+
+    // REPORT 3: the history of every stock movement, newest first
+    static void MovementRecords()
+    {
+        Header("STOCK MOVEMENT RECORDS");
+
+        if (movementCount == 0) Console.WriteLine("No movement records available.");
+
+        for (int i = movementCount - 1; i >= 0; i--)
+        {
+            Console.WriteLine(movementRecords[i]);
+            Console.WriteLine("-------------------------------------------");
+        }
+    }
+
+    // REPORT 4: overall totals for each warehouse and for the whole system
+    static void InventorySummary()
+    {
+        Header("INVENTORY SUMMARY");
+
+        int totalUnits = 0;
+        decimal totalValue = 0m;
+
+        Console.WriteLine("Products registered: " + productCount);
+        Console.WriteLine("Warehouses: " + warehouseCount);
+        Console.WriteLine();
+
+        for (int w = 0; w < warehouseCount; w++)
+        {
+            int units = WarehouseUnits(w);
+            decimal value = WarehouseValue(w);
+
+            totalUnits += units;
+            totalValue += value;
+
+            Console.WriteLine(warehouseNames[w]);
+            Console.WriteLine("Total units: " + units);
+            Console.WriteLine("Stock value: " + value.ToString("C2"));
+            Console.WriteLine();
+        }
+
+        Console.WriteLine("---------------------------------------");
+        Console.WriteLine("TOTAL STOCK UNITS: " + totalUnits);
+        Console.WriteLine("TOTAL STOCK VALUE: " + totalValue.ToString("C2"));
+        Console.WriteLine("MOVEMENT RECORDS: " + movementCount);
+    }
+
+    // ==============================================================
+    //  HELPER METHODS (small tools used by the methods above)
+    // ==============================================================
+
+    // Clears the screen and prints a title
+    static void Header(string title)
+    {
+        Console.Clear();
+        Console.WriteLine($"========== {title} ==========");
+    }
+
+    // Returns the position of a product ID in the arrays, or -1 if it does not exist
+    static int FindProduct(string id)
+    {
+        for (int p = 0; p < productCount; p++)
+        {
+            if (string.Equals(productIds[p], id, StringComparison.OrdinalIgnoreCase))
+                return p;
+        }
+        return -1;
+    }
+
+    // Lists the products, asks for an ID, and returns its position (or -1)
+    static int SelectProduct()
+    {
+        if (productCount == 0)
+        {
+            Console.WriteLine("No products available.");
+            return -1;
+        }
+
+        Console.WriteLine("\nAvailable Products:");
+
+        for (int p = 0; p < productCount; p++)
+            Console.WriteLine(productIds[p] + " - " + productNames[p]);
+
+        string id = ReadNonEmpty("Enter product ID: ");
+        int index = FindProduct(id);
+
+        if (index == -1) Console.WriteLine("Product not found.");
+        return index;
+    }
+
+    // Lists the warehouses, asks for a number, and returns its position (or -1)
+    static int SelectWarehouse()
+    {
+        Console.WriteLine("\nAvailable Warehouses:");
+
+        for (int w = 0; w < warehouseCount; w++)
+            Console.WriteLine((w + 1) + ". " + warehouseNames[w]);
+
+        int choice = ReadInt("Select warehouse number: ", 1);
+
+        if (choice > warehouseCount)
+        {
+            Console.WriteLine("Invalid warehouse selection.");
+            return -1;
+        }
+
+        return choice - 1;   // menu numbers start at 1, array positions start at 0
+    }
+
+    // Total stock of one product across all warehouses
+    static int GetTotalStock(int p)
+    {
+        int total = 0;
+        for (int w = 0; w < warehouseCount; w++) total += stock[p, w];
+        return total;
+    }
+
+    // Total number of units stored in one warehouse
+    static int WarehouseUnits(int w)
+    {
+        int total = 0;
+        for (int p = 0; p < productCount; p++) total += stock[p, w];
+        return total;
+    }
+
+    // Total money value of the stock in one warehouse (quantity x price)
+    static decimal WarehouseValue(int w)
+    {
+        decimal total = 0m;
+        for (int p = 0; p < productCount; p++) total += stock[p, w] * productPrices[p];
+        return total;
+    }
+
+    // Saves one line in the movement records, with the date and time
+    static void LogMovement(
+        string type, string id, string from, string to,
+        long quantity, string details)
+    {
+        if (movementCount >= MAX_MOVEMENTS)
+        {
+            Console.WriteLine("Warning: Movement record storage is full.");
+            return;
+        }
+
+        movementRecords[movementCount] =
+            $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} | {type} | Product: {id} | From: {from} | To: {to} | Quantity: {quantity} | {details}";
+
+        movementCount++;
+    }
+
+    // ---------- INPUT HELPERS: keep asking until the input is valid ----------
+
+    // Text that cannot be empty
+    static string ReadNonEmpty(string prompt)
+    {
+        while (true)
+        {
+            Console.Write(prompt);
+            string value = (Console.ReadLine() ?? "").Trim();
+
+            if (value.Length > 0) return value;
+
+            Console.WriteLine("Input cannot be empty.");
+        }
+    }
+
+    // Whole number from 'minimum' up to 1,000,000 (the cap prevents overflow)
+    static int ReadInt(string prompt, int minimum)
+    {
+        while (true)
+        {
+            Console.Write(prompt);
+
+            if (int.TryParse(Console.ReadLine(), out int value) &&
+                value >= minimum && value <= 1000000)
+            {
+                return value;
+            }
+
+            Console.WriteLine("Enter a whole number from " + minimum + " to 1000000.");
+        }
+    }
+
+    // Money amount of at least 'minimum'
+    static decimal ReadDecimal(string prompt, decimal minimum)
+    {
+        while (true)
+        {
+            Console.Write(prompt);
+
+            if (decimal.TryParse(Console.ReadLine(), out decimal value) &&
+                value >= minimum)
+            {
+                return value;
+            }
+
+            Console.WriteLine("Enter a valid amount of at least " + minimum + ".");
+        }
+    }
+
+    // Waits for any key
+    static void Pause()
+    {
+        Console.WriteLine("\nPress any key to return to the menu...");
+        Console.ReadKey(true);
+    }
+}
